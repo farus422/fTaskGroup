@@ -1,4 +1,4 @@
-package ftaskgtoup
+package fTaskGroup
 
 import (
 	"sync"
