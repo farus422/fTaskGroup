@@ -65,7 +65,7 @@ func (tg *STaskGroup) taskFunctionExec(function TTASK_HANDLER, data interface{})
 		if err := recover(); err != nil {
 			if tg.logPublisher != nil {
 				// log := flog.NewLog(flog.LOGLEVELError, "").AddPanicCallstack(0, ".(*STaskGroup).taskFunctionExec")
-				log := flog.NewLogPanic(flog.LOGLEVELError, ".(*STaskGroup).taskFunctionExec", "")
+				log := flog.Panic(flog.LOGLEVELError, ".(*STaskGroup).taskFunctionExec", "")
 				tg.logPublisher.Publish(log.SetCaption("%s() 發生panic, %v", log.GetFunctionName(), err))
 			}
 			return
