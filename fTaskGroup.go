@@ -1,6 +1,7 @@
 package fTaskGroup
 
 import (
+	"context"
 	"sync"
 
 	fcb "github.com/farus422/fCallstack"
@@ -20,6 +21,8 @@ type sTaskInfoLinkNode struct {
 
 type STaskGroup struct {
 	mutex        sync.Mutex
+	ctx          context.Context
+	cancel       context.CancelFunc
 	serverWG     *sync.WaitGroup
 	taskWG       sync.WaitGroup
 	cond         *sync.Cond
@@ -141,8 +144,13 @@ func (tg *STaskGroup) Shutdown() {
 	// fmt.Printf("Taskman %d taskman is closed - shutdown\n", tg.taskmanNum)
 }
 
-func NewTaskGroup(groupName string, publisher *flog.SPublisher, serverWG *sync.WaitGroup) *STaskGroup {
+func NewTaskGroup(ctx context.Context, groupName string, publisher *flog.SPublisher, serverWG *sync.WaitGroup) *STaskGroup {
 	tg := STaskGroup{serverWG: serverWG, logPublisher: publisher, name: groupName}
+	if ctx == nil {
+		tg.ctx, tg.cancel = context.WithCancel(context.Background())
+	} else {
+		tg.ctx, tg.cancel = context.WithCancel(ctx)
+	}
 	tg.cond = sync.NewCond(&tg.mutex)
 	return &tg
 }

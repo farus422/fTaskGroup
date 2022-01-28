@@ -1,6 +1,7 @@
 package fTaskGroup
 
 import (
+	"context"
 	"sync"
 
 	flog "github.com/farus422/fLogSystem"
@@ -142,8 +143,13 @@ func (tg *STaskGroupSync) Taskman(num int) {
 	tg.mutex.Unlock()
 }
 
-func NewTaskGroupSync(groupName string, publisher *flog.SPublisher, serverWG *sync.WaitGroup) *STaskGroupSync {
+func NewTaskGroupSync(ctx context.Context, groupName string, publisher *flog.SPublisher, serverWG *sync.WaitGroup) *STaskGroupSync {
 	tg := STaskGroupSync{STaskGroup: STaskGroup{serverWG: serverWG, logPublisher: publisher, name: groupName}, idTasks: make(map[int64]*sTaskInfoLinkNode)}
+	if ctx == nil {
+		tg.ctx, tg.cancel = context.WithCancel(context.Background())
+	} else {
+		tg.ctx, tg.cancel = context.WithCancel(ctx)
+	}
 	tg.cond = sync.NewCond(&tg.mutex)
 	return &tg
 }
