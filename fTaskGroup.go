@@ -8,12 +8,19 @@ import (
 	flog "github.com/farus422/fLogSystem"
 )
 
-type TTASK_HANDLER func(data interface{})
+type TTASK_HANDLER func(ctx context.Context, data interface{})
+
+type STaskHandle struct {
+	Ctx      context.Context
+	Cancel   context.CancelFunc
+	HasPanic bool
+}
 
 type sTaskInfoLinkNode struct {
 	function       TTASK_HANDLER
 	data           interface{}
 	ownerID        int64
+	th             *STaskHandle
 	sameOwnerPrev  *sTaskInfoLinkNode
 	sameOwnerNext  *sTaskInfoLinkNode
 	previous, next *sTaskInfoLinkNode
@@ -21,8 +28,6 @@ type sTaskInfoLinkNode struct {
 
 type STaskGroup struct {
 	mutex        sync.Mutex
-	ctx          context.Context
-	cancel       context.CancelFunc
 	serverWG     *sync.WaitGroup
 	taskWG       sync.WaitGroup
 	cond         *sync.Cond
@@ -39,14 +44,22 @@ var taskNodePool = sync.Pool{
 	},
 }
 
-func (tg *STaskGroup) Task(f TTASK_HANDLER, data interface{}) {
+func (tg *STaskGroup) Task(ctx context.Context, f TTASK_HANDLER, data interface{}) *STaskHandle {
 	if f == nil {
-		return
+		return nil
 	}
 	node := taskNodePool.Get().(*sTaskInfoLinkNode)
 	node.function = f
 	node.data = data
+	th := &STaskHandle{}
+	if ctx == nil {
+		th.Ctx, th.Cancel = context.WithCancel(context.Background())
+	} else {
+		th.Ctx, th.Cancel = context.WithCancel(ctx)
+	}
+	node.th = th
 	tg.taskPush(node)
+	return th
 }
 
 func (tg *STaskGroup) taskPush(node *sTaskInfoLinkNode) {
@@ -63,18 +76,19 @@ func (tg *STaskGroup) taskPush(node *sTaskInfoLinkNode) {
 	tg.mutex.Unlock()
 }
 
-func (tg *STaskGroup) taskFunctionExec(function TTASK_HANDLER, data interface{}) {
+func (tg *STaskGroup) taskFunctionExec(th *STaskHandle, function TTASK_HANDLER, data interface{}) {
 	defer func() {
 		if err := recover(); err != nil {
+			th.HasPanic = true
 			if tg.logPublisher != nil {
 				// log := flog.NewLog(flog.LOGLEVELError, "").AddPanicCallstack(0, ".(*STaskGroup).taskFunctionExec")
 				log := flog.Panic(flog.LOGLEVELError, ".(*STaskGroup).taskFunctionExec", "")
 				tg.logPublisher.Publish(log.SetCaption("%s() 發生panic, %v", log.GetFunctionName(), err))
 			}
-			return
 		}
+		th.Cancel()
 	}()
-	function(data)
+	function(th.Ctx, data)
 }
 func (tg *STaskGroup) taskmanWork(myNumber int) {
 	var node *sTaskInfoLinkNode
@@ -107,8 +121,9 @@ func (tg *STaskGroup) taskmanWork(myNumber int) {
 			tg.taskWG.Done()
 			return
 		}
-		tg.taskFunctionExec(node.function, node.data)
+		tg.taskFunctionExec(node.th, node.function, node.data)
 		node.data = nil
+		node.th = nil
 		taskNodePool.Put(node)
 	}
 }
@@ -144,13 +159,8 @@ func (tg *STaskGroup) Shutdown() {
 	// fmt.Printf("Taskman %d taskman is closed - shutdown\n", tg.taskmanNum)
 }
 
-func NewTaskGroup(ctx context.Context, groupName string, publisher *flog.SPublisher, serverWG *sync.WaitGroup) *STaskGroup {
+func NewTaskGroup(groupName string, publisher *flog.SPublisher, serverWG *sync.WaitGroup) *STaskGroup {
 	tg := STaskGroup{serverWG: serverWG, logPublisher: publisher, name: groupName}
-	if ctx == nil {
-		tg.ctx, tg.cancel = context.WithCancel(context.Background())
-	} else {
-		tg.ctx, tg.cancel = context.WithCancel(ctx)
-	}
 	tg.cond = sync.NewCond(&tg.mutex)
 	return &tg
 }

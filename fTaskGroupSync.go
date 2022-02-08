@@ -13,15 +13,23 @@ type STaskGroupSync struct {
 }
 
 // idOwner : 讓不同的Owner能不重複即可
-func (tg *STaskGroupSync) Task(f TTASK_HANDLER, data interface{}, idOwner int64) {
+func (tg *STaskGroupSync) Task(ctx context.Context, f TTASK_HANDLER, data interface{}, idOwner int64) *STaskHandle {
 	if f == nil {
-		return
+		return nil
 	}
 	node := taskNodePool.Get().(*sTaskInfoLinkNode)
 	node.function = f
 	node.data = data
 	node.ownerID = idOwner
+	th := &STaskHandle{}
+	if ctx == nil {
+		th.Ctx, th.Cancel = context.WithCancel(context.Background())
+	} else {
+		th.Ctx, th.Cancel = context.WithCancel(ctx)
+	}
+	node.th = th
 	tg.taskPush(node, idOwner)
+	return th
 }
 
 func (tg *STaskGroupSync) taskPush(node *sTaskInfoLinkNode, idOwner int64) {
@@ -107,9 +115,8 @@ func (tg *STaskGroupSync) taskmanWorkSync(myNumber int) {
 			tg.taskWG.Done()
 			return
 		}
-		tg.taskFunctionExec(node.function, node.data)
+		tg.taskFunctionExec(node.th, node.function, node.data)
 
-		node.data = nil
 		tg.cond.L.Lock()
 		if node.sameOwnerNext != nil {
 			node.sameOwnerNext.sameOwnerPrev = nil
@@ -126,6 +133,8 @@ func (tg *STaskGroupSync) taskmanWorkSync(myNumber int) {
 		// test_gofRun--
 		// fmt.Printf("%03d %d stop = [%1s, %1s, %1s, %1s, %1s, %1s, %1s, %1s, %1s, %1s]\n", rCount, myNumber, test_taskmanRun[0], test_taskmanRun[1], test_taskmanRun[2], test_taskmanRun[3], test_taskmanRun[4], test_taskmanRun[5], test_taskmanRun[6], test_taskmanRun[7], test_taskmanRun[8], test_taskmanRun[9])
 
+		node.data = nil
+		node.th = nil
 		taskNodePool.Put(node)
 	}
 }
@@ -143,13 +152,8 @@ func (tg *STaskGroupSync) Taskman(num int) {
 	tg.mutex.Unlock()
 }
 
-func NewTaskGroupSync(ctx context.Context, groupName string, publisher *flog.SPublisher, serverWG *sync.WaitGroup) *STaskGroupSync {
+func NewTaskGroupSync(groupName string, publisher *flog.SPublisher, serverWG *sync.WaitGroup) *STaskGroupSync {
 	tg := STaskGroupSync{STaskGroup: STaskGroup{serverWG: serverWG, logPublisher: publisher, name: groupName}, idTasks: make(map[int64]*sTaskInfoLinkNode)}
-	if ctx == nil {
-		tg.ctx, tg.cancel = context.WithCancel(context.Background())
-	} else {
-		tg.ctx, tg.cancel = context.WithCancel(ctx)
-	}
 	tg.cond = sync.NewCond(&tg.mutex)
 	return &tg
 }
