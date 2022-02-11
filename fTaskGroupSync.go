@@ -115,7 +115,11 @@ func (tg *STaskGroupSync) taskmanWorkSync(myNumber int) {
 			tg.taskWG.Done()
 			return
 		}
-		tg.taskFunctionExec(node.th, node.function, node.data)
+		select {
+		case <-node.th.Ctx.Done():
+		default:
+			tg.taskFunctionExec(node.th, node.function, node.data)
+		}
 
 		tg.cond.L.Lock()
 		if node.sameOwnerNext != nil {

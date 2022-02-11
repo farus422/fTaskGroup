@@ -121,7 +121,11 @@ func (tg *STaskGroup) taskmanWork(myNumber int) {
 			tg.taskWG.Done()
 			return
 		}
-		tg.taskFunctionExec(node.th, node.function, node.data)
+		select {
+		case <-node.th.Ctx.Done():
+		default:
+			tg.taskFunctionExec(node.th, node.function, node.data)
+		}
 		node.data = nil
 		node.th = nil
 		taskNodePool.Put(node)
