@@ -9,18 +9,19 @@ import (
 
 type STaskGroupSync struct {
 	STaskGroup
-	idTasks map[int64]*sTaskInfoLinkNode
+	// idTasks map[string]*sTaskInfoLinkNode
+	ProcessingTask map[string]struct{} // 改為執行時期檢查
 }
 
 // idOwner : 讓不同的Owner能不重複即可
-func (tg *STaskGroupSync) Task(ctx context.Context, f TTASK_HANDLER, data interface{}, idOwner int64) *STaskHandle {
+func (tg *STaskGroupSync) Task(ctx context.Context, f TTASK_HANDLER, data interface{}, ownerId string) *STaskHandle {
 	if f == nil {
 		return nil
 	}
 	node := taskNodePool.Get().(*sTaskInfoLinkNode)
 	node.function = f
 	node.data = data
-	node.ownerID = idOwner
+	node.ownerId = ownerId
 	th := &STaskHandle{}
 	if ctx == nil {
 		th.Ctx, th.Cancel = context.WithCancel(context.Background())
@@ -28,19 +29,19 @@ func (tg *STaskGroupSync) Task(ctx context.Context, f TTASK_HANDLER, data interf
 		th.Ctx, th.Cancel = context.WithCancel(ctx)
 	}
 	node.th = th
-	tg.taskPush(node, idOwner)
+	tg.taskPush(node, ownerId)
 	return th
 }
 
-func (tg *STaskGroupSync) taskPush(node *sTaskInfoLinkNode, idOwner int64) {
+func (tg *STaskGroupSync) taskPush(node *sTaskInfoLinkNode, ownerId string) {
 	tg.mutex.Lock()
 
-	lastSameOwner := tg.idTasks[idOwner]
-	if lastSameOwner != nil {
-		lastSameOwner.sameOwnerNext = node
-		node.sameOwnerPrev = lastSameOwner
-	}
-	tg.idTasks[idOwner] = node
+	// lastSameOwner := tg.idTasks[ownerId]
+	// if lastSameOwner != nil {
+	// 	lastSameOwner.sameOwnerNext = node
+	// 	node.sameOwnerPrev = lastSameOwner
+	// }
+	// tg.idTasks[ownerId] = node
 
 	if tg.lastNode != nil {
 		node.previous = tg.lastNode
@@ -59,20 +60,35 @@ func (tg *STaskGroupSync) taskPush(node *sTaskInfoLinkNode, idOwner int64) {
 // var test_taskmanRun = [10]string{"", "", "", "", "", "", "", "", "", ""}
 // var test_gofRun int = 0
 
+func (tg *STaskGroupSync) getValidNode() *sTaskInfoLinkNode {
+	var node *sTaskInfoLinkNode
+	var ok bool
+
+	node = tg.firstNode
+	for node != nil && node.ownerId != "" {
+		if _, ok = tg.ProcessingTask[node.ownerId]; !ok {
+			tg.ProcessingTask[node.ownerId] = struct{}{}
+			return node
+		}
+		node = node.next
+	}
+	// for node = tg.firstNode; (node != nil) && (node.sameOwnerPrev != nil); node = node.next {
+	// }
+	return node
+}
+
 func (tg *STaskGroupSync) taskmanWorkSync(myNumber int) {
 	var node, prev, next *sTaskInfoLinkNode
 
 	// rCount := 0
 	tg.cond.L.Lock()
 	for {
-		for node = tg.firstNode; (node != nil) && (node.sameOwnerPrev != nil); node = node.next {
-		}
+		node = tg.getValidNode()
 		for node == nil {
 			// cond.Wait 有個漏洞，不能保證 Wait() 之後不會被別人捷足先登，所以這邊用for而不是if
 			// Wait() 會解除 Lock() 等到醒來才重新取得，所以無法保證不會被捷足先登
 			tg.cond.Wait()
-			for node = tg.firstNode; (node != nil) && (node.sameOwnerPrev != nil); node = node.next {
-			}
+			node = tg.getValidNode()
 		}
 
 		// pop並縫合
@@ -107,8 +123,10 @@ func (tg *STaskGroupSync) taskmanWorkSync(myNumber int) {
 		node.previous = nil
 		node.next = nil
 
-		if node.function == nil {
+		if node.function == nil { // shutdown
+			// shutdown不必delete(tg.ProcessingTask, node.ownerId)，因為ownerId必為""
 			node.data = nil
+			node.th = nil
 			node.sameOwnerNext = nil
 			taskNodePool.Put(node)
 			// fmt.Printf("Taskman #%d - Closed\n", myNumber)
@@ -122,12 +140,15 @@ func (tg *STaskGroupSync) taskmanWorkSync(myNumber int) {
 		}
 
 		tg.cond.L.Lock()
-		if node.sameOwnerNext != nil {
-			node.sameOwnerNext.sameOwnerPrev = nil
-			node.sameOwnerNext = nil
-		} else {
-			tg.idTasks[node.ownerID] = nil
+		if node.ownerId != "" {
+			delete(tg.ProcessingTask, node.ownerId)
 		}
+		// if node.sameOwnerNext != nil {
+		// 	node.sameOwnerNext.sameOwnerPrev = nil
+		// 	node.sameOwnerNext = nil
+		// } else {
+		// 	tg.idTasks[node.ownerId] = nil
+		// }
 
 		// if test_wonerState[node.ownerID] == false {
 		// 	fmt.Printf("Error!! ownerID %d are already stop\n", node.ownerID)
@@ -157,7 +178,8 @@ func (tg *STaskGroupSync) Taskman(num int) {
 }
 
 func NewTaskGroupSync(groupName string, publisher *flog.SPublisher, serverWG *sync.WaitGroup) *STaskGroupSync {
-	tg := STaskGroupSync{STaskGroup: STaskGroup{serverWG: serverWG, logPublisher: publisher, name: groupName}, idTasks: make(map[int64]*sTaskInfoLinkNode)}
+	// tg := STaskGroupSync{STaskGroup: STaskGroup{serverWG: serverWG, logPublisher: publisher, name: groupName}, idTasks: make(map[string]*sTaskInfoLinkNode)}
+	tg := STaskGroupSync{STaskGroup: STaskGroup{serverWG: serverWG, logPublisher: publisher, name: groupName}}
 	tg.cond = sync.NewCond(&tg.mutex)
 	return &tg
 }

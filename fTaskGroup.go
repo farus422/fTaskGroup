@@ -19,7 +19,7 @@ type STaskHandle struct {
 type sTaskInfoLinkNode struct {
 	function       TTASK_HANDLER
 	data           interface{}
-	ownerID        int64
+	ownerId        string
 	th             *STaskHandle
 	sameOwnerPrev  *sTaskInfoLinkNode
 	sameOwnerNext  *sTaskInfoLinkNode
@@ -153,6 +153,7 @@ func (tg *STaskGroup) Shutdown() {
 			node := taskNodePool.Get().(*sTaskInfoLinkNode)
 			node.function = nil
 			node.data = nil
+			node.ownerId = ""
 			tg.taskPush(node)
 		}
 		tg.taskWG.Wait()
