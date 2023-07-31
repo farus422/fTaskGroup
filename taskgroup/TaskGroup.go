@@ -9,21 +9,6 @@ import (
 type TASK_HANDLER func(taskInfo ITaskController, data interface{})
 type TASK_PANIC func(tg *TaskGroup, err any)
 
-type sTaskInfoLinkNode struct {
-	function       TASK_HANDLER // nil用來指示執行緒結束
-	data           interface{}
-	ownerId        string
-	th             *taskHandle
-	sameOwnerNext  *sTaskInfoLinkNode
-	previous, next *sTaskInfoLinkNode
-}
-
-var taskNodePool = sync.Pool{
-	New: func() interface{} {
-		return new(sTaskInfoLinkNode)
-	},
-}
-
 type TaskGroup struct {
 	mutex      sync.Mutex
 	taskWG     sync.WaitGroup
@@ -166,4 +151,19 @@ func NewTaskGroup(groupName string, onPanic TASK_PANIC) *TaskGroup {
 	tg := TaskGroup{name: groupName, onPanic: onPanic}
 	tg.cond = sync.NewCond(&tg.mutex)
 	return &tg
+}
+
+type sTaskInfoLinkNode struct {
+	function       TASK_HANDLER // nil用來指示執行緒結束
+	data           interface{}
+	ownerId        string
+	th             *taskHandle
+	sameOwnerNext  *sTaskInfoLinkNode
+	previous, next *sTaskInfoLinkNode
+}
+
+var taskNodePool = sync.Pool{
+	New: func() interface{} {
+		return new(sTaskInfoLinkNode)
+	},
 }
